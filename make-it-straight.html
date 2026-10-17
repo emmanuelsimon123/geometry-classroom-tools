@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Make It Straight</title>
+<style>
+  :root {
+    --bg: #f6f7fa; --panel: #ffffff; --ink: #1b1f2a; --muted: #5b6b85; --line: #1f2a44;
+    --accent: #c08a2b; --grid: #e3e7ee; --good: #2f6b5e; --bad: #a23b2a; --btn: #1f2a44; --btn-ink: #ffffff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #12151c; --panel: #1b2030; --ink: #eef1f6; --muted: #9aa6bd; --line: #d9e0ee;
+      --accent: #e0b25a; --grid: #262c3d; --good: #6fbfa9; --bad: #e07a68; --btn: #e0b25a; --btn-ink: #12151c;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #12151c; --panel: #1b2030; --ink: #eef1f6; --muted: #9aa6bd; --line: #d9e0ee;
+    --accent: #e0b25a; --grid: #262c3d; --good: #6fbfa9; --bad: #e07a68; --btn: #e0b25a; --btn-ink: #12151c;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.45 Calibri, "Segoe UI", Arial, sans-serif; }
+  main { max-width: 920px; margin: 0 auto; padding: 20px 16px 32px; }
+  h1 { font: 700 30px/1.2 Cambria, Georgia, serif; margin: 0 0 6px; }
+  .lead { margin: 0 0 14px; color: var(--muted); }
+  .board { background: var(--panel); border-radius: 12px; padding: 8px; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+  svg { display: block; width: 100%; height: auto; touch-action: none; user-select: none; }
+  .bar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 14px; }
+  button { font: 600 16px Calibri, "Segoe UI", Arial, sans-serif; border: 0; border-radius: 8px; padding: 10px 18px; cursor: pointer; background: var(--btn); color: var(--btn-ink); }
+  button.secondary { background: transparent; color: var(--ink); box-shadow: inset 0 0 0 1.5px var(--muted); }
+  button:disabled { opacity: .45; cursor: default; }
+  .count { color: var(--muted); margin-left: auto; }
+  .result { margin-top: 14px; padding: 14px 16px; border-radius: 10px; background: var(--panel); display: none; }
+  .result.show { display: block; }
+  .result h2 { margin: 0 0 6px; font: 700 22px Cambria, Georgia, serif; }
+  .result.wrong h2 { color: var(--bad); }
+  .result.right h2 { color: var(--good); }
+  .result p { margin: 4px 0; }
+  .big { font-size: 20px; font-weight: 700; }
+  .hint { font-size: 14px; color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Make it straight</h1>
+  <p class="lead">Drag point <b>C</b> so that A, B, and C form one perfectly straight line. When you think it is perfectly straight, press <b>Submit</b>.</p>
+
+  <div class="board">
+    <svg id="board" viewBox="0 0 800 460" role="img" aria-label="Segment AB and a draggable point C">
+      <g id="grid"></g>
+      <line id="ab" stroke-width="5" stroke-linecap="round"></line>
+      <line id="bc" stroke-width="5" stroke-linecap="round"></line>
+      <g id="trueline"></g>
+      <circle id="pa" r="7"></circle>
+      <circle id="pb" r="7"></circle>
+      <circle id="pc" r="13" tabindex="0" aria-label="Point C, draggable. Arrow keys move it one pixel."></circle>
+      <text id="la" font-size="22" font-weight="700">A</text>
+      <text id="lb" font-size="22" font-weight="700">B</text>
+      <text id="lc" font-size="22" font-weight="700">C</text>
+    </svg>
+  </div>
+
+  <div class="bar">
+    <button id="submit">Submit</button>
+    <button id="next" class="secondary" disabled>Next line</button>
+    <span class="count" id="count">Attempts: 0</span>
+  </div>
+
+  <div class="result" id="result" aria-live="polite"></div>
+  <p class="hint">Tip: you can also select point C and nudge it with the arrow keys.</p>
+</main>
+
+<script>
+(() => {
+  const W = 800, H = 460, TOL = 0.01; // degrees; looking straight is not enough
+  const $ = id => document.getElementById(id);
+  const svg = $("board"), ab = $("ab"), bc = $("bc"), pa = $("pa"), pb = $("pb"), pc = $("pc");
+  const la = $("la"), lb = $("lb"), lc = $("lc"), mag = $("trueline"), result = $("result");
+  const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+  let A, B, C, attempts = 0, locked = false, dragging = false;
+
+  // light grid, so the eye has something to lean on (and is still fooled)
+  const grid = $("grid");
+  for (let x = 40; x < W; x += 40) grid.insertAdjacentHTML("beforeend", `<line x1="${x}" y1="0" x2="${x}" y2="${H}" stroke-width="1" class="g"/>`);
+  for (let y = 40; y < H; y += 40) grid.insertAdjacentHTML("beforeend", `<line x1="0" y1="${y}" x2="${W}" y2="${y}" stroke-width="1" class="g"/>`);
+
+  const rand = (a, b) => a + Math.random() * (b - a);
+  function newLine() {
+    // segment AB in a random direction, with room beyond B for C
+    const ang = rand(0, Math.PI * 2), len = rand(170, 240);
+    const cx = W / 2 + rand(-60, 60), cy = H / 2 + rand(-30, 30);
+    A = { x: cx - Math.cos(ang) * len * 0.9, y: cy - Math.sin(ang) * len * 0.9 };
+    B = { x: A.x + Math.cos(ang) * len, y: A.y + Math.sin(ang) * len };
+    // keep everything on the board
+    const fit = p => ({ x: Math.min(W - 40, Math.max(40, p.x)), y: Math.min(H - 40, Math.max(40, p.y)) });
+    A = fit(A); B = fit(B);
+    const dir = Math.atan2(B.y - A.y, B.x - A.x);
+    // C starts clearly bent, 20 to 40 degrees off
+    const off = (Math.random() < .5 ? -1 : 1) * rand(20, 40) * Math.PI / 180, r = rand(140, 190);
+    C = fit({ x: B.x + Math.cos(dir + off) * r, y: B.y + Math.sin(dir + off) * r });
+    locked = false; mag.innerHTML = ""; result.className = "result"; result.innerHTML = "";
+    $("submit").disabled = false; $("next").disabled = true;
+    draw();
+  }
+
+  function angleAtB() {
+    const v1 = { x: A.x - B.x, y: A.y - B.y }, v2 = { x: C.x - B.x, y: C.y - B.y };
+    const dot = v1.x * v2.x + v1.y * v2.y, n = Math.hypot(v1.x, v1.y) * Math.hypot(v2.x, v2.y);
+    return Math.acos(Math.max(-1, Math.min(1, dot / n))) * 180 / Math.PI;
+  }
+
+  function place(el, p) { el.setAttribute("cx", p.x); el.setAttribute("cy", p.y); }
+  function label(el, p, other) {
+    const dx = p.x - other.x, dy = p.y - other.y, d = Math.hypot(dx, dy) || 1;
+    el.setAttribute("x", p.x + dx / d * 24 - 7); el.setAttribute("y", p.y + dy / d * 24 + 8);
+  }
+  function draw() {
+    const ink = css("--line"), acc = css("--accent");
+    grid.querySelectorAll(".g").forEach(g => g.setAttribute("stroke", css("--grid")));
+    for (const [l, p, q] of [[ab, A, B], [bc, B, C]]) { l.setAttribute("x1", p.x); l.setAttribute("y1", p.y); l.setAttribute("x2", q.x); l.setAttribute("y2", q.y); l.setAttribute("stroke", ink); }
+    place(pa, A); place(pb, B); place(pc, C);
+    pa.setAttribute("fill", ink); pb.setAttribute("fill", ink);
+    pc.setAttribute("fill", acc); pc.style.cursor = locked ? "default" : "grab";
+    for (const t of [la, lb, lc]) t.setAttribute("fill", css("--ink"));
+    label(la, A, B);
+    // put B's label beside the line, not on it
+    const dir = Math.atan2(B.y - A.y, B.x - A.x);
+    lb.setAttribute("x", B.x + Math.cos(dir - Math.PI / 2) * 26 - 7); lb.setAttribute("y", B.y + Math.sin(dir - Math.PI / 2) * 26 + 8);
+    label(lc, C, B);
+  }
+
+  function toBoard(e) {
+    const pt = svg.createSVGPoint(); pt.x = e.clientX; pt.y = e.clientY;
+    const p = pt.matrixTransform(svg.getScreenCTM().inverse());
+    return { x: Math.min(W - 12, Math.max(12, p.x)), y: Math.min(H - 12, Math.max(12, p.y)) };
+  }
+  pc.addEventListener("pointerdown", e => { if (locked) return; dragging = true; pc.setPointerCapture(e.pointerId); pc.style.cursor = "grabbing"; });
+  pc.addEventListener("pointermove", e => { if (!dragging) return; C = toBoard(e); draw(); });
+  const stop = () => { dragging = false; draw(); };
+  pc.addEventListener("pointerup", stop); pc.addEventListener("pointercancel", stop);
+  pc.addEventListener("keydown", e => {
+    if (locked) return;
+    const step = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[e.key];
+    if (!step) return; e.preventDefault(); C = { x: C.x + step[0], y: C.y + step[1] }; draw();
+  });
+
+  function showTrueLine(dev) {
+    // draw the genuinely straight line: AB continued through B to the edge of the board,
+    // plus the spot where C would have to sit (same distance from B) to be straight
+    const dir = Math.atan2(B.y - A.y, B.x - A.x), ux = Math.cos(dir), uy = Math.sin(dir);
+    const tEdge = Math.min(...[ux > 0 ? (W - B.x) / ux : ux < 0 ? -B.x / ux : Infinity,
+                               uy > 0 ? (H - B.y) / uy : uy < 0 ? -B.y / uy : Infinity]);
+    const E = { x: B.x + ux * tEdge, y: B.y + uy * tEdge };
+    const r = Math.hypot(C.x - B.x, C.y - B.y), S = { x: B.x + ux * r, y: B.y + uy * r };
+    const good = css("--good");
+    mag.innerHTML = `
+      <line x1="${A.x}" y1="${A.y}" x2="${E.x}" y2="${E.y}" stroke="${good}" stroke-width="2.5" stroke-dasharray="9 6"/>
+      <circle cx="${S.x}" cy="${S.y}" r="11" fill="none" stroke="${good}" stroke-width="2.5"/>`;
+    // the overlay goes above the student's line so it stays visible even when the two nearly overlap
+    svg.appendChild(mag);
+  }
+
+  $("submit").addEventListener("click", () => {
+    if (locked) return;
+    attempts++; $("count").textContent = `Attempts: ${attempts}`;
+    const angle = angleAtB(), dev = 180 - angle;
+    locked = true; draw();
+    $("submit").disabled = true; $("next").disabled = false;
+    if (dev <= TOL) {
+      result.className = "result show right";
+      result.innerHTML = `<h2>Perfectly straight!</h2><p class="big">The angle at B is ${angle.toFixed(2)}&deg;.</p><p>Show your teacher your screen right now.</p>`;
+    } else {
+      showTrueLine(dev);
+      result.className = "result show wrong";
+      result.innerHTML = `<h2>Not straight.</h2>
+        <p class="big">The angle at B is ${angle.toFixed(2)}&deg;. A straight line would make exactly 180&deg;.</p>
+        <p>The green dashed line is the genuinely straight line, and the green circle is where C would have to be. ${dev < 3 ? "It looked straight, but it isn't." : ""}</p>`;
+    }
+  });
+  $("next").addEventListener("click", newLine);
+
+  window.addEventListener("resize", draw);
+  matchMedia("(prefers-color-scheme: dark)").addEventListener("change", draw);
+  newLine();
+})();
+</script>
+</body>
+</html>
