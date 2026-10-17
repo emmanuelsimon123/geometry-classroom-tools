@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Two Triangles in a Circle</title>
+<style>
+  :root {
+    --bg: #f6f7fa; --panel: #ffffff; --ink: #1b1f2a; --muted: #5b6b85; --line: #1f2a44;
+    --accent: #c08a2b; --grid: #e3e7ee; --t1: #2f6b9a; --t2: #a2602a; --btn: #1f2a44; --btn-ink: #ffffff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #12151c; --panel: #1b2030; --ink: #eef1f6; --muted: #9aa6bd; --line: #d9e0ee;
+      --accent: #e0b25a; --grid: #262c3d; --t1: #7fb3df; --t2: #e3a46a; --btn: #e0b25a; --btn-ink: #12151c;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #12151c; --panel: #1b2030; --ink: #eef1f6; --muted: #9aa6bd; --line: #d9e0ee;
+    --accent: #e0b25a; --grid: #262c3d; --t1: #7fb3df; --t2: #e3a46a; --btn: #e0b25a; --btn-ink: #12151c;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.45 Calibri, "Segoe UI", Arial, sans-serif; }
+  main { max-width: 920px; margin: 0 auto; padding: 20px 16px 28px; }
+  h1 { font: 700 30px/1.2 Cambria, Georgia, serif; margin: 0 0 6px; }
+  .lead { margin: 0 0 12px; }
+  .board { background: var(--panel); border-radius: 12px; padding: 8px; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+  svg { display: block; width: 100%; height: auto; touch-action: none; user-select: none; }
+  .tools { display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: center; margin-top: 12px; }
+  .tools label { display: inline-flex; gap: 6px; align-items: center; cursor: pointer; }
+  .tools input { width: 18px; height: 18px; accent-color: var(--accent); }
+  button { font: 600 15px Calibri, "Segoe UI", Arial, sans-serif; border: 0; border-radius: 8px; padding: 8px 14px; cursor: pointer; background: transparent; color: var(--ink); box-shadow: inset 0 0 0 1.5px var(--muted); }
+  .note { margin-top: 12px; padding: 12px 14px; border-radius: 10px; background: var(--panel); display: none; }
+  .note.show { display: block; }
+  .hint { font-size: 14px; color: var(--muted); margin-top: 12px; }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Two triangles in a circle</h1>
+  <p class="lead">C is the center of the circle. AB and DE are straight lines through C. Joining A to D and B to E makes two triangles, <b>ACD</b> and <b>BCE</b>. <b>Are the two triangles equal?</b> If they are, prove it. If they are not, prove why not.</p>
+
+  <div class="board">
+    <svg id="board" viewBox="0 0 800 500" role="img" aria-label="A circle with center C, two diameters AB and DE, and triangles ACD and BCE">
+      <g id="grid"></g>
+      <g id="shade"></g>
+      <circle id="circle" fill="none" stroke-width="2"></circle>
+      <g id="segs"></g>
+      <g id="marks"></g>
+      <g id="pts"></g>
+    </svg>
+  </div>
+
+  <div class="tools">
+    <label><input type="checkbox" id="optShade" checked> Shade the triangles</label>
+    <label><input type="checkbox" id="optLen"> Measure lengths</label>
+    <label><input type="checkbox" id="optAng"> Measure angles at C</label>
+    <label><input type="checkbox" id="optGrid" checked> Grid</label>
+    <button id="reset">Reset</button>
+  </div>
+  <div class="note" id="note" aria-live="polite"><b>Measuring shows you what is true in this picture, not why it is true.</b> Remember Monday: a line can look straight and not be. Your proof has to give a reason for every step.</div>
+
+  <p class="hint">Drag A, B, D, or E around the circle (or select one and use the arrow keys). Prefer to build it yourself? Use <a href="https://www.geogebra.org/classic#geometry" target="_blank" rel="noopener">GeoGebra Geometry</a>.</p>
+</main>
+
+<script>
+(() => {
+  const W = 800, H = 500, CX = 400, CY = 250, R = 190, NS = "http://www.w3.org/2000/svg";
+  const $ = id => document.getElementById(id);
+  const svg = $("board"), css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+  const START = { a: 200, d: 145 }; // degrees, measured with y pointing down
+  let thA = START.a, thD = START.d, drag = null;
+  const opt = { shade: $("optShade"), len: $("optLen"), ang: $("optAng"), grid: $("optGrid") };
+
+  const rad = d => d * Math.PI / 180;
+  const at = th => ({ x: CX + R * Math.cos(rad(th)), y: CY + R * Math.sin(rad(th)) });
+  const el = (tag, attrs, parent) => { const e = document.createElementNS(NS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); parent && parent.appendChild(e); return e; };
+  const dist = (p, q) => Math.hypot(p.x - q.x, p.y - q.y);
+  const norm = d => ((d % 360) + 360) % 360;
+  // the angle at C between two directions, between 0 and 180
+  const angBetween = (t1, t2) => { const d = Math.abs(norm(t1 - t2)); return d > 180 ? 360 - d : d; };
+
+  function arc(t1, t2, r, color) {
+    // short arc at C from direction t1 to direction t2
+    let d = norm(t2 - t1); let s = t1, e = t2;
+    if (d > 180) { s = t2; e = t1; d = 360 - d; }
+    const p = { x: CX + r * Math.cos(rad(s)), y: CY + r * Math.sin(rad(s)) }, q = { x: CX + r * Math.cos(rad(e)), y: CY + r * Math.sin(rad(e)) };
+    return `<path d="M ${p.x} ${p.y} A ${r} ${r} 0 0 1 ${q.x} ${q.y}" fill="none" stroke="${color}" stroke-width="2.5"/>`;
+  }
+
+  function draw() {
+    const ink = css("--line"), t1 = css("--t1"), t2 = css("--t2"), mu = css("--muted"), tx = css("--ink");
+    const A = at(thA), B = at(thA + 180), D = at(thD), E = at(thD + 180), C = { x: CX, y: CY };
+    // grid
+    $("grid").innerHTML = "";
+    if (opt.grid.checked) for (let x = 40; x < W; x += 40) el("line", { x1: x, y1: 0, x2: x, y2: H, stroke: css("--grid") }, $("grid"));
+    if (opt.grid.checked) for (let y = 50; y < H; y += 40) el("line", { x1: 0, y1: y, x2: W, y2: y, stroke: css("--grid") }, $("grid"));
+    // triangles
+    $("shade").innerHTML = opt.shade.checked
+      ? `<polygon points="${A.x},${A.y} ${C.x},${C.y} ${D.x},${D.y}" fill="${t1}" fill-opacity=".18"/><polygon points="${B.x},${B.y} ${C.x},${C.y} ${E.x},${E.y}" fill="${t2}" fill-opacity=".18"/>` : "";
+    const circ = $("circle"); circ.setAttribute("cx", CX); circ.setAttribute("cy", CY); circ.setAttribute("r", R); circ.setAttribute("stroke", mu);
+    // segments: the two diameters, then the two joined sides
+    $("segs").innerHTML = [[A, B, ink, 3], [D, E, ink, 3], [A, D, t1, 3.5], [B, E, t2, 3.5]]
+      .map(([p, q, c, w]) => `<line x1="${p.x}" y1="${p.y}" x2="${q.x}" y2="${q.y}" stroke="${c}" stroke-width="${w}" stroke-linecap="round"/>`).join("");
+    // measurements
+    let m = "";
+    if (opt.ang.checked) {
+      m += arc(thA, thD, 34, t1) + arc(thA + 180, thD + 180, 34, t2);
+      const lab = (ta, tb, color) => { let mid = norm(ta + norm(tb - ta) / 2); if (norm(tb - ta) > 180) mid = norm(mid + 180); const p = { x: CX + 62 * Math.cos(rad(mid)), y: CY + 62 * Math.sin(rad(mid)) }; return `<text x="${p.x}" y="${p.y + 5}" text-anchor="middle" font-size="16" font-weight="700" fill="${color}">${angBetween(ta, tb).toFixed(1)}&deg;</text>`; };
+      m += lab(thA, thD, t1) + lab(thA + 180, thD + 180, t2);
+    }
+    if (opt.len.checked) {
+      const unit = R / 5; // radius = 5 units
+      const lbl = (p, q, color, side) => { const mx = (p.x + q.x) / 2, my = (p.y + q.y) / 2, dx = q.x - p.x, dy = q.y - p.y, d = Math.hypot(dx, dy) || 1; let nx = -dy / d, ny = dx / d; if ((mx + nx - CX) * nx + (my + ny - CY) * ny < 0) { nx = -nx; ny = -ny; } return `<text x="${mx + nx * 20 * side}" y="${my + ny * 20 * side + 5}" text-anchor="middle" font-size="15" font-weight="700" fill="${color}">${(dist(p, q) / unit).toFixed(2)}</text>`; };
+      m += lbl(A, D, t1, 1) + lbl(B, E, t2, 1);
+      for (const [p, name] of [[A, "CA"], [B, "CB"], [D, "CD"], [E, "CE"]]) {
+        const mx = (p.x + CX) / 2, my = (p.y + CY) / 2;
+        m += `<text x="${mx}" y="${my - 8}" text-anchor="middle" font-size="13" fill="${mu}">${name} ${(R / unit).toFixed(2)}</text>`;
+      }
+    }
+    $("marks").innerHTML = m;
+    $("note").className = (opt.len.checked || opt.ang.checked) ? "note show" : "note";
+    // points
+    const pts = $("pts"); pts.innerHTML = "";
+    el("circle", { cx: C.x, cy: C.y, r: 6, fill: ink }, pts);
+    el("text", { x: C.x + 10, y: C.y - 10, "font-size": 22, "font-weight": 700, fill: tx }, pts).textContent = "C";
+    for (const [p, name, which, off] of [[A, "A", "a", 0], [B, "B", "a", 180], [D, "D", "d", 0], [E, "E", "d", 180]]) {
+      const h = el("circle", { cx: p.x, cy: p.y, r: 11, fill: css("--accent"), tabindex: 0, "aria-label": `Point ${name}, draggable along the circle` }, pts);
+      h.style.cursor = "grab";
+      h.addEventListener("pointerdown", e => { drag = { which, off }; svg.setPointerCapture(e.pointerId); });
+      h.addEventListener("keydown", e => {
+        const step = { ArrowLeft: -1, ArrowDown: -1, ArrowRight: 1, ArrowUp: 1 }[e.key]; if (!step) return; e.preventDefault();
+        if (which === "a") thA += step; else thD += step; draw(); pts.querySelector(`[aria-label^="Point ${name}"]`).focus();
+      });
+      const dx = p.x - CX, dy = p.y - CY, d = Math.hypot(dx, dy);
+      el("text", { x: p.x + dx / d * 26 - 7, y: p.y + dy / d * 26 + 8, "font-size": 22, "font-weight": 700, fill: tx }, pts).textContent = name;
+    }
+  }
+
+  function toBoard(e) { const pt = svg.createSVGPoint(); pt.x = e.clientX; pt.y = e.clientY; return pt.matrixTransform(svg.getScreenCTM().inverse()); }
+  svg.addEventListener("pointermove", e => {
+    if (!drag) return; const p = toBoard(e); const th = Math.atan2(p.y - CY, p.x - CX) * 180 / Math.PI - drag.off;
+    if (drag.which === "a") thA = th; else thD = th; draw();
+  });
+  const stop = () => { drag = null; };
+  svg.addEventListener("pointerup", stop); svg.addEventListener("pointercancel", stop); svg.addEventListener("pointerleave", stop);
+  for (const k in opt) opt[k].addEventListener("change", draw);
+  $("reset").addEventListener("click", () => { thA = START.a; thD = START.d; opt.len.checked = false; opt.ang.checked = false; draw(); });
+  matchMedia("(prefers-color-scheme: dark)").addEventListener("change", draw);
+  draw();
+})();
+</script>
+</body>
+</html>
