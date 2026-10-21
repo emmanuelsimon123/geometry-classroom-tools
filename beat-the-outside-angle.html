@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Beat the Outside Angle</title>
+<style>
+  :root {
+    --bg: #f6f7fa; --panel: #ffffff; --ink: #1b1f2a; --muted: #5b6b85; --line: #1f2a44;
+    --accent: #c08a2b; --grid: #e3e7ee; --good: #2f6b5e; --bad: #a23b2a; --btn: #1f2a44; --btn-ink: #ffffff;
+    --outside: #b8552e; --inside: #2f6b9a;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #12151c; --panel: #1b2030; --ink: #eef1f6; --muted: #9aa6bd; --line: #d9e0ee;
+      --accent: #e0b25a; --grid: #262c3d; --good: #6fbfa9; --bad: #e07a68; --btn: #e0b25a; --btn-ink: #12151c;
+      --outside: #ec8a5e; --inside: #7fb3df;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #12151c; --panel: #1b2030; --ink: #eef1f6; --muted: #9aa6bd; --line: #d9e0ee;
+    --accent: #e0b25a; --grid: #262c3d; --good: #6fbfa9; --bad: #e07a68; --btn: #e0b25a; --btn-ink: #12151c;
+    --outside: #ec8a5e; --inside: #7fb3df;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.45 Calibri, "Segoe UI", Arial, sans-serif; }
+  main { max-width: 920px; margin: 0 auto; padding: 20px 16px 32px; }
+  h1 { font: 700 30px/1.2 Cambria, Georgia, serif; margin: 0 0 6px; }
+  .lead { margin: 0 0 14px; color: var(--muted); }
+  .board { background: var(--panel); border-radius: 12px; padding: 8px; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+  svg { display: block; width: 100%; height: auto; touch-action: none; user-select: none; }
+  .bar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 14px; }
+  button { font: 600 16px Calibri, "Segoe UI", Arial, sans-serif; border: 0; border-radius: 8px; padding: 10px 18px; cursor: pointer; background: var(--btn); color: var(--btn-ink); }
+  button.secondary { background: transparent; color: var(--ink); box-shadow: inset 0 0 0 1.5px var(--muted); }
+  button:disabled { opacity: .45; cursor: default; }
+  .count { color: var(--muted); margin-left: auto; }
+  .result { margin-top: 14px; padding: 14px 16px; border-radius: 10px; background: var(--panel); display: none; }
+  .result.show { display: block; }
+  .result h2 { margin: 0 0 6px; font: 700 22px Cambria, Georgia, serif; }
+  .result.wrong h2 { color: var(--bad); }
+  .result.flat h2 { color: var(--accent); }
+  .result p { margin: 4px 0; }
+  .big { font-size: 20px; font-weight: 700; }
+  .out { color: var(--outside); } .in { color: var(--inside); }
+  .hint { font-size: 14px; color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Beat the outside angle</h1>
+  <p class="lead">Side BC is extended to D. Drag A, B, or C until the angle at <b>A</b> or the angle at <b>B</b> is as big as the <b>outside angle at C</b>. When you think you have it, press <b>Submit</b>.</p>
+
+  <div class="board">
+    <svg id="board" viewBox="0 0 800 460" role="img" aria-label="Triangle ABC with side BC extended to D, and draggable points A, B, and C">
+      <g id="grid"></g>
+      <g id="arcs"></g>
+      <g id="segs"></g>
+      <g id="nums"></g>
+      <g id="labs"></g>
+      <g id="pts"></g>
+    </svg>
+  </div>
+
+  <div class="bar">
+    <button id="submit">Submit</button>
+    <button id="again" class="secondary" disabled>Try again</button>
+    <span class="count" id="count">Attempts: 0</span>
+  </div>
+
+  <div class="result" id="result" aria-live="polite"></div>
+  <p class="hint">Tip: you can also select a point and nudge it with the arrow keys. The angles stay hidden until you submit.</p>
+</main>
+
+<script>
+(() => {
+  const W = 800, H = 460, FLAT = 0.5, NS = "http://www.w3.org/2000/svg"; // FLAT: degrees; below this it is a line, not a triangle
+  const $ = id => document.getElementById(id);
+  const svg = $("board"), result = $("result");
+  const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+  const START = { A: { x: 350, y: 110 }, B: { x: 170, y: 340 }, C: { x: 450, y: 340 } };
+  let P = structuredClone(START), drag = null, locked = false, attempts = 0, best = Infinity;
+
+  // light grid, same as Make it straight
+  const grid = $("grid");
+  for (let x = 40; x < W; x += 40) grid.insertAdjacentHTML("beforeend", `<line x1="${x}" y1="0" x2="${x}" y2="${H}" stroke-width="1" class="g"/>`);
+  for (let y = 40; y < H; y += 40) grid.insertAdjacentHTML("beforeend", `<line x1="0" y1="${y}" x2="${W}" y2="${y}" stroke-width="1" class="g"/>`);
+
+  // the angle at v between the directions to p and q, between 0 and 180
+  function ang(v, p, q) {
+    let d = Math.abs(Math.atan2(p.y - v.y, p.x - v.x) - Math.atan2(q.y - v.y, q.x - v.x));
+    if (d > Math.PI) d = 2 * Math.PI - d;
+    return d * 180 / Math.PI;
+  }
+  const norm = t => ((t % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
+  // outside angle ACD is 180 minus the inside angle at C (BC and CD make one straight line)
+  const angles = () => ({ out: 180 - ang(P.C, P.A, P.B), a: ang(P.A, P.B, P.C), b: ang(P.B, P.A, P.C) });
+
+  // D: BC continued past C, up to 220 units or the edge of the board
+  function pointD() {
+    const { B, C } = P, dx = C.x - B.x, dy = C.y - B.y, L = Math.hypot(dx, dy) || 1, ux = dx / L, uy = dy / L;
+    const t = Math.min(ux > 0 ? (W - 20 - C.x) / ux : ux < 0 ? (20 - C.x) / ux : Infinity,
+                       uy > 0 ? (H - 20 - C.y) / uy : uy < 0 ? (20 - C.y) / uy : Infinity, 220);
+    return { x: C.x + ux * t, y: C.y + uy * t };
+  }
+
+  // shaded wedge at v from direction p to direction q, the short way round
+  function wedge(v, p, q, r, color) {
+    let t1 = Math.atan2(p.y - v.y, p.x - v.x), t2 = Math.atan2(q.y - v.y, q.x - v.x);
+    if (norm(t2 - t1) > Math.PI) [t1, t2] = [t2, t1];
+    const s = { x: v.x + r * Math.cos(t1), y: v.y + r * Math.sin(t1) }, e = { x: v.x + r * Math.cos(t2), y: v.y + r * Math.sin(t2) };
+    const mid = t1 + norm(t2 - t1) / 2;
+    return { path: `<path d="M ${v.x} ${v.y} L ${s.x} ${s.y} A ${r} ${r} 0 0 1 ${e.x} ${e.y} Z" fill="${color}" fill-opacity=".2" stroke="${color}" stroke-width="2.5"/>`,
+             at: (rr) => ({ x: v.x + rr * Math.cos(mid), y: v.y + rr * Math.sin(mid) }) };
+  }
+
+  function draw() {
+    const { A, B, C } = P, D = pointD(), ink = css("--line"), out = css("--outside"), inn = css("--inside");
+    grid.querySelectorAll(".g").forEach(g => g.setAttribute("stroke", css("--grid")));
+    const wC = wedge(C, A, D, 44, out), wA = wedge(A, B, C, 36, inn), wB = wedge(B, A, C, 36, inn);
+    $("arcs").innerHTML = wC.path + wA.path + wB.path;
+    const seg = (p, q, dash) => `<line x1="${p.x}" y1="${p.y}" x2="${q.x}" y2="${q.y}" stroke="${ink}" stroke-width="5" stroke-linecap="round"${dash ? ' stroke-dasharray="10 8"' : ""}/>`;
+    $("segs").innerHTML = seg(A, B) + seg(B, C) + seg(C, A) + seg(C, D, true);
+
+    // the numbers appear on the figure only after Submit
+    if (locked) {
+      const { out: o, a, b } = angles(), n = (w, r, v, color) => { const p = w.at(r); return `<text x="${p.x}" y="${p.y + 6}" text-anchor="middle" font-size="18" font-weight="700" fill="${color}">${v.toFixed(1)}&deg;</text>`; };
+      $("nums").innerHTML = n(wC, 78, o, out) + n(wA, 66, a, inn) + n(wB, 66, b, inn);
+    } else $("nums").innerHTML = "";
+
+    // labels sit outside the triangle, pointing away from its center
+    const g = { x: (A.x + B.x + C.x) / 3, y: (A.y + B.y + C.y) / 3 };
+    const lab = (p, name) => { const dx = p.x - g.x, dy = p.y - g.y, d = Math.hypot(dx, dy) || 1; return `<text x="${p.x + dx / d * 28 - 7}" y="${p.y + dy / d * 28 + 8}" font-size="22" font-weight="700" fill="${css("--ink")}">${name}</text>`; };
+    const dir = Math.atan2(D.y - C.y, D.x - C.x);
+    $("labs").innerHTML = lab(A, "A") + lab(B, "B") + lab(C, "C") +
+      `<text x="${D.x + Math.cos(dir - Math.PI / 2) * 24 - 7}" y="${D.y + Math.sin(dir - Math.PI / 2) * 24 + 8}" font-size="22" font-weight="700" fill="${css("--ink")}">D</text>`;
+
+    const pts = $("pts"); pts.innerHTML = "";
+    for (const k of ["A", "B", "C"]) {
+      const c = document.createElementNS(NS, "circle");
+      for (const [at, v] of [["cx", P[k].x], ["cy", P[k].y], ["r", 13], ["fill", css("--accent")], ["tabindex", 0], ["data-pt", k], ["aria-label", `Point ${k}, draggable. Arrow keys move it one pixel.`]]) c.setAttribute(at, v);
+      c.style.cursor = locked ? "default" : "grab";
+      c.addEventListener("pointerdown", e => { if (locked) return; drag = k; svg.setPointerCapture(e.pointerId); });
+      c.addEventListener("keydown", e => {
+        if (locked) return;
+        const step = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[e.key];
+        if (!step) return; e.preventDefault(); P[k] = { x: P[k].x + step[0], y: P[k].y + step[1] }; draw();
+        pts.querySelector(`[data-pt="${k}"]`).focus();
+      });
+      pts.appendChild(c);
+    }
+  }
+
+  function toBoard(e) {
+    const pt = svg.createSVGPoint(); pt.x = e.clientX; pt.y = e.clientY;
+    const p = pt.matrixTransform(svg.getScreenCTM().inverse());
+    return { x: Math.min(W - 14, Math.max(14, p.x)), y: Math.min(H - 14, Math.max(14, p.y)) };
+  }
+  svg.addEventListener("pointermove", e => { if (!drag || locked) return; P[drag] = toBoard(e); draw(); });
+  const stop = () => { drag = null; };
+  svg.addEventListener("pointerup", stop); svg.addEventListener("pointercancel", stop);
+
+  const fmt = v => (v < 0.1 ? v.toFixed(2) : v.toFixed(1));
+  $("submit").addEventListener("click", () => {
+    if (locked) return;
+    const { out, a, b } = angles();
+    if (Math.min(a, b, 180 - a - b) < FLAT) {
+      result.className = "result show flat";
+      result.innerHTML = `<h2>That is squashed flat.</h2><p>It is a line now, not a triangle. Pull it back open and submit again.</p>`;
+      return;
+    }
+    attempts++; locked = true;
+    // every real triangle lands here: the outside angle is always bigger (Proposition 16)
+    const big = Math.max(a, b), gap = out - big;
+    best = Math.min(best, gap);
+    $("count").textContent = `Attempts: ${attempts}. Closest so far: ${fmt(best)}° short`;
+    $("submit").disabled = true; $("again").disabled = false;
+    result.className = "result show wrong";
+    result.innerHTML = `<h2>Not yet.</h2>
+      <p class="big">Outside angle at C: <span class="out">${out.toFixed(1)}&deg;</span>. Biggest inside angle: <span class="in">${big.toFixed(1)}&deg;</span>.</p>
+      <p>You are still ${fmt(gap)}&deg; short. ${gap < 3 ? "That was close. Can anyone ever get all the way there?" : ""}</p>`;
+    draw();
+  });
+  $("again").addEventListener("click", () => {
+    locked = false; result.className = "result"; result.innerHTML = "";
+    $("submit").disabled = false; $("again").disabled = true; draw();
+  });
+
+  window.addEventListener("resize", draw);
+  matchMedia("(prefers-color-scheme: dark)").addEventListener("change", draw);
+  draw();
+})();
+</script>
+</body>
+</html>
